@@ -1,4 +1,5 @@
 'use client';
+import * as turf from '@turf/turf';
 import React, { useEffect, useState, useRef } from 'react';
 import mapboxgl, { GeoJSONSource ,AnyLayer, MapboxGeoJSONFeature} from 'mapbox-gl';
 import MapboxLanguage from '@mapbox/mapbox-gl-language';
@@ -6,13 +7,14 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import DropZone from './DropFile';
 import {GeoJSONFeature,GeoJSON,GeoJSONFeatureCollection} from "@mapbox/geojson-types"
 import {saveAs} from 'file-saver'
+import { createRoot } from 'react-dom/client';
+
 
 const EDITLAYER="editlayer";
 const UUIDKEY="uuid_key_2fs423f9j2r32joif09";
 
 const regeojson=new RegExp(/(?<filename>.+)\.geojson/);
 const addedSource=new RegExp(/added_data_(?<filename>.+)/);
-
 
 function randomColor(seed?:string){
     const encoder=new TextEncoder();
@@ -27,6 +29,23 @@ function randomColor(seed?:string){
     return hexstr;
 }
 
+function propertiesTable(properties:{[key:string]:any}){
+    const keys=Object.keys(properties).filter((k)=>k!=UUIDKEY);
+
+    return (
+        <table className='w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400'>
+            <tbody>
+                {keys.map((k)=>{
+                    return (<tr key={k} className='bg-white border-b dark:bg-gray-800 dark:border-gray-700'>
+                        <th scope='row' className='p-3 font-medium text-gray-900 whitespace-nowrap dark:text-white'>{k}</th>
+                        <td className='p-3'>{properties[k]}</td>
+                        </tr>)
+                })}
+            </tbody>
+        </table>
+    )
+}
+
 
 const layers=new Map<string,GeoJSONFeature[]>();
 const editingFeature:{feature:GeoJSONFeatureCollection|null,selected:string|null,layername:string|null}={feature:null,selected:null,layername:null};
@@ -36,9 +55,13 @@ export default function SimpleMap() {
     const mapContainer = useRef(null);
     const [map, setMap] = useState<mapboxgl.Map|null>(null);
 
-    const [currentMode,setCurrentMode]=useState<"Spectate"|"EditMode"|"Selected">("Spectate");
+    
     const [mapclick,setmapclick]=useState<mapboxgl.MapMouseEvent&mapboxgl.EventData|null>(null);
+    /**
+     * レイヤー名表示用
+     */
     const [layerlist,setLayerList]=useState<string[]>([]);
+    const [currentMode,setCurrentMode]=useState<"Spectate"|"Edit"|"Selected"|"Create">("Spectate");
 
     useEffect(()=>{
         if(mapclick!=null){
@@ -47,6 +70,7 @@ export default function SimpleMap() {
                 return;
             }
             const f=map.queryRenderedFeatures(mapclick.point);
+            console.log(f);
             
             // マップ上をクリックしたとき
             if(currentMode=="Spectate"){
@@ -54,11 +78,13 @@ export default function SimpleMap() {
                     const regex=f[i].layer.id.match(addedSource);
                     if(regex){
                         const filename=regex.groups!["filename"];
-                        new mapboxgl.Popup({closeOnClick:true}).setLngLat(mapclick.lngLat).setHTML(`<pre>${JSON.stringify(f[i].properties,null,4)}</pre>`).addTo(map);
+                        const div=document.createElement("div");
+                        createRoot(div).render(propertiesTable(f[i].properties!));
+                        new mapboxgl.Popup({closeOnClick:true,closeButton:false}).setLngLat(mapclick.lngLat).setDOMContent(div).addTo(map);
                     }
                 }
             }
-            else if(currentMode=="EditMode"){
+            else if(currentMode=="Edit"){
                 for(let i=0;i<f.length;i++){
                     const regex=f[i].layer.id.match(addedSource);
                     if(regex){
@@ -202,10 +228,15 @@ export default function SimpleMap() {
 
     function clickModeButton(){
         if(currentMode=="Spectate"){
-            setCurrentMode("EditMode");
+            setCurrentMode("Edit");
         }
         else{
             setCurrentMode("Spectate");
+        }
+    }
+    function clickCreateButton(){
+        if(currentMode=="Edit"){
+            setCurrentMode("Create");
         }
     }
     function applyEdit(){
@@ -248,6 +279,21 @@ export default function SimpleMap() {
         const blob=new Blob([filedata],{type:"text/plain"});
         saveAs(blob,filename+".geojson");
     }
+    // 削除
+    function clickDelete(e:React.MouseEvent<HTMLElement>){
+        if(!map){
+            console.log(map);
+            return;
+        }
+        const filename=e.currentTarget.getAttribute("data-filename");
+        console.log("Delete");
+        console.log(filename);
+        const layerid="added_data_"+filename;
+        map.removeLayer(layerid);
+        map.removeSource(layerid);
+        layers.delete(layerid);
+        setLayerList(layerlist.filter((l)=>l!=filename));
+    }
 
     useEffect(() => {
         const initializeMap = ({
@@ -263,26 +309,53 @@ export default function SimpleMap() {
                 zoom: 15,
                 maxPitch:0,
                 minZoom:5,
-                style:"/std.json",
+                style:"/std.json"
             });
             // 言語変更設定参考
             // defaultLanguageとしてjaを指定
             const language = new MapboxLanguage({ defaultLanguage: 'ja' });
             map.addControl(language);
             
-            const movemouse=(e:mapboxgl.MapMouseEvent & mapboxgl.EventData)=>{
+            // 点をドラッグ中
+            function movemouse(e:mapboxgl.MapMouseEvent & mapboxgl.EventData){
+                const coords=[e.lngLat.lng,e.lngLat.lat];
+                const zoomlv=map.getZoom();
                 if(!editingFeature.feature||!editingFeature.selected){
                     return;
                 }
                 const f=map.queryRenderedFeatures(e.point);
                 for(let i=0;i<f.length;i++){
-                    if(f[i].id!==EDITLAYER+"-POINT"&&f[i].properties!["point-type"]=="grabbable"){
-                        editingFeature.selected=f[i].properties![UUIDKEY];
-                        break;
+                    if(f[i].layer.id.match(addedSource)){
+                        const id=f[i].layer.id;
+                        const uuid=f[i].properties![UUIDKEY];
+                        const feature=layers.get(id)!.find((f)=>f.properties![UUIDKEY]==uuid);
+                        if(!feature){
+                            continue;
+                        }
+                        if(feature.geometry!.type=="LineString"){
+                            const len=feature.geometry?.coordinates.length;
+                            if(!len){
+                                continue;
+                            }
+                            const hpos=feature.geometry!.coordinates[0];
+                            const tpos=feature.geometry!.coordinates[len-1];
+                            const dh=turf.distance([hpos[0],hpos[1]],coords,{units:"meters"});
+                            const dt=turf.distance([tpos[0],tpos[1]],coords,{units:"meters"});
+                            
+                            if(dh/zoomlv<0.7){
+                                coords[0]=hpos[0];
+                                coords[1]=hpos[1];
+                                break;
+                            }
+                            if(dt/zoomlv<0.7){
+                                coords[0]=tpos[0];
+                                coords[1]=tpos[1];
+                                break;
+                            }
+                        }
                     }
                 }
                 const editsource=map.getSource(EDITLAYER) as GeoJSONSource;
-                const coords=[e.lngLat.lng,e.lngLat.lat];
                 for(let i=1;i<editingFeature.feature.features.length;i++){
                     if(editingFeature.feature.features[i].properties![UUIDKEY]==editingFeature.selected){
                         editingFeature.feature.features[i].geometry!.coordinates=coords;
@@ -296,8 +369,6 @@ export default function SimpleMap() {
                 map.off("mousemove",movemouse);
                 map.off("touchmove",movemouse);
             }
-
-            
 
             map.on('load', () => {
                 setMap(map);
@@ -346,6 +417,7 @@ export default function SimpleMap() {
                     map!.getCanvas().style.cursor="";
                 });
                 map.on("click",(e)=>{
+                    console.log(currentMode);
                     setmapclick(e);
                 });
                 // 編集時ドラッグ
@@ -374,11 +446,18 @@ export default function SimpleMap() {
             <div ref={mapContainer} className='w-full h-screen' />
             <div className="absolute p-3 w-52 top-0 right-0">
                 <div>
-                <p><button className="border-2 border-white bg-green-300 rounded-md hover:bg-green-500 active:bg-green-700" onClick={clickModeButton}>{currentMode}</button></p>
-                <p><button className="border-2 border-white bg-green-300 rounded-md disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700" onClick={applyEdit} disabled={currentMode!="Selected"}>Apply</button></p>
+                <p><button className="border-2 border-white bg-green-300 rounded-md hover:bg-green-500 active:bg-green-700 m-1 w-full" onClick={clickModeButton}>{currentMode}</button></p>
+                <p><button className="border-2 border-white bg-green-300 rounded-md disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700 m-1 w-full" onClick={applyEdit} disabled={currentMode!="Selected"}>Apply</button></p>
                 </div>
                 <div className='border-2 border-black bg-white rounded-md'>
-                    {layerlist.map((l)=>{return <li key={l}>{l}<button className='border-1 border-black rounded-md bg-green-300 disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700'  disabled={currentMode!="Spectate"} onClick={clickDownload} data-filename={l}>{"Download"}</button></li>})}
+                    {layerlist.map((l)=>{return (
+                    <li key={l}>
+                        {l}
+                        <button className='border-1 border-black rounded-md bg-green-300 disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700'  disabled={currentMode!="Spectate"} onClick={clickDownload} data-filename={l}>{"Download"}</button>
+                        <button className='border-1 border-black rounded-md bg-green-300 disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700' disabled={currentMode!="Edit"} onClick={clickCreateButton} data-filename={l}>Create</button>
+                        <button className='border-1 border-black rounded-md bg-green-300 disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700'  disabled={currentMode!="Spectate"} onClick={clickDelete} data-filename={l}>{"Del"}</button>
+                    </li>
+                    )})}
                 </div>
             </div>
         </DropZone>
