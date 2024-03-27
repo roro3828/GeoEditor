@@ -1,13 +1,13 @@
 'use client';
 import * as turf from '@turf/turf';
 import React, { useEffect, useState, useRef } from 'react';
-import mapboxgl, { GeoJSONSource ,AnyLayer, MapboxGeoJSONFeature} from 'mapbox-gl';
+import mapboxgl, { GeoJSONSource } from 'mapbox-gl';
 import MapboxLanguage from '@mapbox/mapbox-gl-language';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import DropZone from './DropFile';
-import {GeoJSONFeature,GeoJSON,GeoJSONFeatureCollection,GeoJSONGeometry} from "@mapbox/geojson-types"
 import {saveAs} from 'file-saver'
 import { createRoot } from 'react-dom/client';
+import {GeoJSONFeature,GeoJSON,GeoJSONFeatureCollection} from "@/types/geojson"
 
 
 const EDITLAYER="editlayer";
