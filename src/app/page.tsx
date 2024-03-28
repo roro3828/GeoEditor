@@ -12,6 +12,7 @@ import {GeoJSONFeature,GeoJSON,GeoJSONFeatureCollection} from "@/types/geojson"
 
 const EDITLAYER="editlayer";
 const UUIDKEY="uuid_key_2fs423f9j2r32joif09";
+const SNAPSIZE=5;
 
 const regeojson=new RegExp(/(?<filename>.+)\.geojson/);
 const addedSource=new RegExp(/added_data_(?<filename>.+)/);
@@ -30,16 +31,21 @@ function randomColor(seed?:string){
     return hexstr;
 }
 
-function propertiesTable(properties:{[key:string]:any}){
+function propertiesTable(properties:{[key:string]:any},title?:string,onChange?:(e:React.ChangeEvent<HTMLElement>)=>void){
+    const rewriteable=!(typeof onchange==="undefined");
     const keys=Object.keys(properties).filter((k)=>k!=UUIDKEY);
 
     return (
-        <table className='w-full text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400'>
+        <table className='text-sm text-left rtl:text-right text-gray-500 dark:text-gray-400 overflow-hidden'>
+            {title?
+            <thead><tr><th>
+                {title}
+            </th></tr></thead>:<></>}
             <tbody>
                 {keys.map((k)=>{
-                    return (<tr key={k} className='bg-white border-b dark:bg-gray-800 dark:border-gray-700'>
-                        <th scope='row' className='p-3 font-medium text-gray-900 whitespace-nowrap dark:text-white'>{k}</th>
-                        <td className='p-3'>{properties[k]}</td>
+                    return (<tr key={k} className='bg-white border-b dark:bg-gray-800 dark:border-gray-700 overflow-hidden'>
+                        <th scope='row' className='p-3 font-medium text-gray-900 whitespace-nowrap dark:text-white w-auto'>{k}</th>
+                        <td className='p-3 w-auto overflow-hidden'>{properties[k]}</td>
                         </tr>)
                 })}
             </tbody>
@@ -156,6 +162,12 @@ export default function SimpleMap() {
             setCurrentMode("Edit");
         }
         else{
+            if(map){
+                const editsource=map.getSource(EDITLAYER) as GeoJSONSource;
+                editsource.setData({
+                    type:"FeatureCollection",
+                    features:[]});
+            }
             setEditLayerVisibility(false);
             setCurrentMode("Spectate");
         }
@@ -285,67 +297,58 @@ export default function SimpleMap() {
                     console.log("Map not loaded");
                     return;
                 }
-                const f=map.queryRenderedFeatures(e.point);
-                console.log(f);
+                const f=map.queryRenderedFeatures(e.point,{layers:[EDITLAYER+"-POINT",...Array.from(layers.keys())]});
                 // マップ上をクリックしたとき
                 if(currentModeRef.current=="Spectate"){
                     for(let i=0;i<f.length;i++){
-                        const regex=f[i].layer.id.match(addedSource);
-                        if(regex){
-                            const filename=regex.groups!["filename"];
-                            const div=document.createElement("div");
-                            createRoot(div).render(propertiesTable(f[i].properties!));
-                            new mapboxgl.Popup({closeOnClick:true,closeButton:false}).setLngLat(e.lngLat).setDOMContent(div).addTo(map);
-                        }
+                        const div=document.createElement("div");
+                        createRoot(div).render(propertiesTable(f[i].properties!));
+                        new mapboxgl.Popup({closeOnClick:true,closeButton:false}).setLngLat(e.lngLat).setDOMContent(div).addTo(map);
                     }
                 }
                 else if(currentModeRef.current=="Edit"){
                     for(let i=0;i<f.length;i++){
-                        const regex=f[i].layer.id.match(addedSource);
-                        if(regex){
-                            const layerid=f[i].layer.id;
-                            const layer=layers.get(layerid);
-                            if(!layer){
-                                console.log(`${layerid} not found`);
-                                return;
-                            }
-                            const properties=f[i].properties!;
-                            const uuid:string=properties[UUIDKEY];
-                            const editsource=map.getSource(EDITLAYER) as GeoJSONSource;
-                            const feature=JSON.parse(JSON.stringify(layers.get(layerid)!.find((f)=>f.properties![UUIDKEY]==uuid))) as GeoJSONFeature;
-                            if(!feature||!feature.geometry){
-                                return;
-                            }
-                            const featurecollection:GeoJSONFeatureCollection={
-                                type:"FeatureCollection",
-                                features:[
-                                    feature
-                                ]
-                            }
-                                if(feature.geometry.type=="LineString"){
-                                for(let p=0;p<feature.geometry.coordinates.length;p++){
-                                    featurecollection.features.push({
-                                            type:"Feature",
-                                            properties:{
-                                                "point-type":"grabbable",
-                                                "uuid_key_2fs423f9j2r32joif09":crypto.randomUUID()
-                                            },
-                                            geometry:{
-                                                type:"Point",
-                                                coordinates:feature.geometry.coordinates[p]
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-        
-                            editsource.setData(featurecollection as any);
-                            editingFeature.feature=featurecollection;
-                            editingFeature.selected=null;
-                            editingFeature.layername=layerid;
-                            setCurrentMode("Selected");
-                            break;
+                        const layerid=f[i].layer.id;
+                        const layer=layers.get(layerid);
+                        if(!layer){
+                            console.log(`${layerid} not found`);
+                            return;
                         }
+                        const properties=f[i].properties!;
+                        const uuid:string=properties[UUIDKEY];
+                        const editsource=map.getSource(EDITLAYER) as GeoJSONSource;
+                        const feature=JSON.parse(JSON.stringify(layers.get(layerid)!.find((f)=>f.properties![UUIDKEY]==uuid))) as GeoJSONFeature;
+                        if(!feature||!feature.geometry){
+                            return;
+                        }
+                        const featurecollection:GeoJSONFeatureCollection={
+                            type:"FeatureCollection",
+                            features:[
+                                feature
+                            ]
+                        }
+                        if(feature.geometry.type=="LineString"){
+                            for(let p=0;p<feature.geometry.coordinates.length;p++){
+                                featurecollection.features.push({
+                                    type:"Feature",
+                                    properties:{
+                                        "point-type":"grabbable",
+                                        "uuid_key_2fs423f9j2r32joif09":crypto.randomUUID()
+                                    },
+                                    geometry:{
+                                        type:"Point",
+                                        coordinates:feature.geometry.coordinates[p]
+                                    }
+                                })
+                            }
+                        }
+        
+                        editsource.setData(featurecollection as any);
+                        editingFeature.feature=featurecollection;
+                        editingFeature.selected=null;
+                        editingFeature.layername=layerid;
+                        setCurrentMode("Selected");
+                        break;
                     }
                 }
                 else if(currentModeRef.current=="Selected"){
@@ -364,10 +367,49 @@ export default function SimpleMap() {
                     if(!lgeo||lgeo.type!="LineString"){
                         return;
                     }
-                    lgeo.coordinates.push([e.lngLat.lng,e.lngLat.lat]);
+                    lgeo.coordinates.push(snapCursor(e));
                     const geojsonsource=map.getSource(EDITLAYER)! as GeoJSONSource;
                     geojsonsource.setData(editingFeature.feature as any);
                 }
+            }
+
+            function snapCursor(e:mapboxgl.MapMouseEvent & mapboxgl.EventData):[number,number]{
+                const zoomlv=map.getZoom();
+                const f=map.queryRenderedFeatures([
+                    [e.point.x-SNAPSIZE,e.point.y-SNAPSIZE],
+                    [e.point.x+SNAPSIZE,e.point.y+SNAPSIZE]
+                ],{layers:Array.from(layers.keys())});
+                const coords:[number,number]=[e.lngLat.lng,e.lngLat.lat];
+                for(let i=0;i<f.length;i++){
+                    const id=f[i].layer.id;
+                    const uuid=f[i].properties![UUIDKEY];
+                    const feature=layers.get(id)!.find((f)=>f.properties![UUIDKEY]==uuid);
+                    if(!feature){
+                        continue;
+                    }
+                    if(feature.geometry!.type=="LineString"){
+                        const len=feature.geometry?.coordinates.length;
+                        if(!len){
+                            continue;
+                        }
+                        const hpos=feature.geometry!.coordinates[0];
+                        const tpos=feature.geometry!.coordinates[len-1];
+                        const dh=turf.distance([hpos[0],hpos[1]],coords,{units:"meters"});
+                        const dt=turf.distance([tpos[0],tpos[1]],coords,{units:"meters"});
+
+                        if(dh/zoomlv<(SNAPSIZE/10)){
+                            coords[0]=hpos[0];
+                            coords[1]=hpos[1];
+                            break;
+                        }
+                        if(dt/zoomlv<(SNAPSIZE/10)){
+                            coords[0]=tpos[0];
+                            coords[1]=tpos[1];
+                            break;
+                        }
+                    }
+                }
+                return coords;
             }
             
             // 点をドラッグ中
@@ -376,40 +418,7 @@ export default function SimpleMap() {
                     if(!editingFeature.feature||!editingFeature.selected){
                         return;
                     }
-                    const coords:[number,number]=[e.lngLat.lng,e.lngLat.lat];
-                    const zoomlv=map.getZoom();
-                    const f=map.queryRenderedFeatures(e.point);
-                    for(let i=0;i<f.length;i++){
-                        if(f[i].layer.id.match(addedSource)){
-                            const id=f[i].layer.id;
-                            const uuid=f[i].properties![UUIDKEY];
-                            const feature=layers.get(id)!.find((f)=>f.properties![UUIDKEY]==uuid);
-                            if(!feature){
-                                continue;
-                            }
-                            if(feature.geometry!.type=="LineString"){
-                                const len=feature.geometry?.coordinates.length;
-                                if(!len){
-                                    continue;
-                                }
-                                const hpos=feature.geometry!.coordinates[0];
-                                const tpos=feature.geometry!.coordinates[len-1];
-                                const dh=turf.distance([hpos[0],hpos[1]],coords,{units:"meters"});
-                                const dt=turf.distance([tpos[0],tpos[1]],coords,{units:"meters"});
-                                
-                                if(dh/zoomlv<0.7){
-                                    coords[0]=hpos[0];
-                                    coords[1]=hpos[1];
-                                    break;
-                                }
-                                if(dt/zoomlv<0.7){
-                                    coords[0]=tpos[0];
-                                    coords[1]=tpos[1];
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    const coords:[number,number]=snapCursor(e);
                     const editsource=map.getSource(EDITLAYER) as GeoJSONSource;
                     for(let i=1;i<editingFeature.feature.features.length;i++){
                         if(editingFeature.feature.features[i].properties![UUIDKEY]==editingFeature.selected){
@@ -430,12 +439,11 @@ export default function SimpleMap() {
                         return;
                     }
                     const geojsonsource=map.getSource(EDITLAYER)! as GeoJSONSource;
-
                     const geometry=editingFeature.feature.features[0].geometry;
                     if(!geometry||geometry.type!="Point"){
                         return;
                     }
-                    geometry.coordinates=[e.lngLat.lng,e.lngLat.lat];
+                    geometry.coordinates=snapCursor(e);
 
                     geojsonsource.setData(editingFeature.feature as any);
                 }
@@ -521,18 +529,21 @@ export default function SimpleMap() {
             <div ref={mapContainer} className='w-full h-screen' />
             <div className="absolute p-3 w-52 top-0 right-0">
                 <div>
-                <p><button className="border-2 border-white bg-green-300 rounded-md hover:bg-green-500 active:bg-green-700 m-1 w-full" onClick={clickModeButton}>{currentMode}</button></p>
-                <p><button className="border-2 border-white bg-green-300 rounded-md disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700 m-1 w-full" onClick={applyEdit} disabled={!(currentMode=="Selected"||currentMode=="Create")}>Apply</button></p>
-                </div>
-                <div className='border-2 border-black bg-white rounded-md'>
-                    {layerlist.map((l)=>{return (
-                    <li key={l}>
-                        {l}
-                        <button className='border-1 border-black rounded-md bg-green-300 disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700'  disabled={currentMode!="Spectate"} onClick={clickDownload} data-filename={l}>{"Download"}</button>
-                        <button className='border-1 border-black rounded-md bg-green-300 disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700' disabled={currentMode!="Edit"} onClick={clickCreateButton} data-filename={l}>Create</button>
-                        <button className='border-1 border-black rounded-md bg-green-300 disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700'  disabled={currentMode!="Spectate"} onClick={clickDelete} data-filename={l}>{"Del"}</button>
-                    </li>
-                    )})}
+                    <button className="border-2 border-white bg-green-300 rounded-md hover:bg-green-500 active:bg-green-700 m-1 w-full" onClick={clickModeButton}>{currentMode}</button>
+                    <button className="border-2 border-white bg-green-300 rounded-md disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700 m-1 w-full" onClick={applyEdit} disabled={!(currentMode=="Selected"||currentMode=="Create")}>Apply</button>
+                    <div className='border-2 border-black bg-white rounded-md m-1 w-full'>
+                        {layerlist.map((l)=>{return (
+                        <li key={l}>
+                            {l}
+                            <button className='border-1 border-black rounded-md bg-green-300 disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700'  disabled={currentMode!="Spectate"} onClick={clickDownload} data-filename={l}>{"Download"}</button>
+                            <button className='border-1 border-black rounded-md bg-green-300 disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700' disabled={currentMode!="Edit"} onClick={clickCreateButton} data-filename={l}>Create</button>
+                            <button className='border-1 border-black rounded-md bg-green-300 disabled:bg-slate-400 hover:bg-green-500 active:bg-green-700'  disabled={currentMode!="Spectate"} onClick={clickDelete} data-filename={l}>{"Del"}</button>
+                        </li>
+                        )})}
+                    </div>
+                    {currentMode=="Selected"?<div className='border-2 border-black bg-white rounded-md m-1 w-full'>
+                            {propertiesTable(editingFeature.feature?.features[0].properties!,"Properties",(e)=>{})}
+                    </div>:<></>}
                 </div>
             </div>
         </DropZone>
